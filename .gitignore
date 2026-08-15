@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+dist/
+*.xcodeproj/
+xcuserdata/
+.DS_Store
+.memsearch/
+NEXT_SESSION.md

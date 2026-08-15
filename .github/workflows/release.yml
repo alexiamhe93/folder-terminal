@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      SWIFT_ARCHS: arm64 x86_64
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Verify tag matches app version
+        run: |
+          app_version="$(plutil -extract CFBundleShortVersionString raw Resources/Info.plist)"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "$app_version" != "$tag_version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match app version $app_version"
+            exit 1
+          fi
+
+      - name: Test
+        run: swift test
+
+      - name: Build universal release archive
+        run: make release
+
+      - name: Verify release
+        run: |
+          codesign --verify --deep --strict dist/FolderTerminal.app
+          architectures="$(lipo -archs dist/FolderTerminal.app/Contents/MacOS/FolderTerminal)"
+          grep -qw arm64 <<< "$architectures"
+          grep -qw x86_64 <<< "$architectures"
+          cd dist
+          shasum -a 256 -c FolderTerminal-*-macOS.zip.sha256
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FolderTerminal-${{ github.ref_name }}-macOS
+          path: |
+            dist/FolderTerminal-*-macOS.zip
+            dist/FolderTerminal-*-macOS.zip.sha256
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/FolderTerminal-*-macOS.zip \
+            dist/FolderTerminal-*-macOS.zip.sha256 \
+            --verify-tag \
+            --title "Folder Terminal $GITHUB_REF_NAME" \
+            --generate-notes
