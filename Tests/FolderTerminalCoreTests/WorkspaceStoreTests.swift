@@ -52,6 +52,40 @@ struct WorkspaceStoreTests {
         #expect(restored.document == first.document)
     }
 
+    /// The saved workspace lists every folder the user has browsed, so it must
+    /// not be left readable by other accounts on the machine.
+    @Test func savedWorkspaceIsReadableOnlyByItsOwner() throws {
+        let root = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let container = root.appendingPathComponent("Application Support/FolderTerminal")
+        let saveURL = container.appendingPathComponent("workspace.json")
+        let store = WorkspaceStore(persistenceURL: saveURL, bookmarkResolver: TestBookmarkResolver())
+        store.saveNow()
+
+        #expect(store.persistenceError == nil)
+        #expect(try mode(of: saveURL) == 0o600)
+        #expect(try mode(of: container) == 0o700)
+    }
+
+    /// A container left behind by an older build starts wide open; saving must
+    /// narrow it rather than trust the mode it was created with.
+    @Test func savingTightensAnAlreadyPermissiveContainer() throws {
+        let root = temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let container = root.appendingPathComponent("FolderTerminal")
+        try FileManager.default.createDirectory(
+            at: container,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o755]
+        )
+        let saveURL = container.appendingPathComponent("workspace.json")
+        let store = WorkspaceStore(persistenceURL: saveURL, bookmarkResolver: TestBookmarkResolver())
+        store.saveNow()
+
+        #expect(try mode(of: container) == 0o700)
+        #expect(try mode(of: saveURL) == 0o600)
+    }
+
     @Test func environmentPinIsIndependentFromLinkAndReportedWorkingFolder() {
         let root = temporaryFolder()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -192,6 +226,11 @@ struct WorkspaceStoreTests {
             persistenceURL: root.appendingPathComponent("workspace.json"),
             bookmarkResolver: TestBookmarkResolver()
         )
+    }
+
+    private func mode(of url: URL) throws -> Int {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes[.posixPermissions] as? NSNumber)?.intValue ?? -1
     }
 
     private func temporaryFolder() -> URL {

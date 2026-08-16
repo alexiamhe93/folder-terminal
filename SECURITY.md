@@ -14,4 +14,6 @@ Please avoid accessing data that is not yours, running destructive demonstration
 
 Folder Terminal is intentionally unsandboxed and starts real login shells. Commands and child processes have the permissions of the logged-in user, as they do in Terminal.app. The application does not provide a security boundary around terminal processes.
 
+The app sends no data off the machine and has no telemetry or accounts. It stores one local file, `~/Library/Application Support/FolderTerminal/workspace.json`, holding the panel layout, the folders you have browsed, and security-scoped bookmarks to them. That file and its containing folder are written owner-only (`0600` / `0700`); delete the folder to clear the saved workspace, including browsing history.
+
 Official release archives are ad-hoc signed until Apple Developer ID signing and notarisation are introduced. Verify the release checksum when provenance matters, and build from source if you require full inspection of the executable.

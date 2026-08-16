@@ -4,6 +4,10 @@ All notable changes to Folder Terminal will be documented here. Releases follow 
 
 ## [Unreleased]
 
+### Security
+
+- The saved workspace, which records browsed folders and bookmarks to them, is now written owner-only (`0600`) inside an owner-only container (`0700`). Containers created by earlier builds are tightened on the next save.
+
 ## [0.1.0] - 2026-08-15
 
 ### Added

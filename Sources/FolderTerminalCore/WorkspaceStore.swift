@@ -235,14 +235,31 @@ public final class WorkspaceStore: ObservableObject {
         saveWorkItem?.cancel()
         do {
             let folder = persistenceURL.deletingLastPathComponent()
-            try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+            try fileManager.createDirectory(
+                at: folder,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(document).write(to: persistenceURL, options: .atomic)
+            restrictPersistencePermissions(folder: folder)
             persistenceError = nil
         } catch {
             persistenceError = error.localizedDescription
         }
+    }
+
+    /// The saved workspace names every folder the user has browsed, and carries
+    /// security-scoped bookmarks to them. Default file modes would leave that
+    /// readable by any other account on the machine, so narrow both the file and
+    /// its container to the owner. `createDirectory` only applies attributes to
+    /// directories it creates, so an already-existing container is tightened
+    /// here too; failures are ignored because a readable workspace is better
+    /// than a lost one.
+    private func restrictPersistencePermissions(folder: URL) {
+        try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path)
+        try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: persistenceURL.path)
     }
 
     public func load() {
