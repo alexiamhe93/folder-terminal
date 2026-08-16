@@ -35,7 +35,8 @@ Release downloads are currently ad-hoc signed rather than Apple-notarised. macOS
 
 ### Build from source
 
-Install the full current version of Xcode, then run:
+Building needs a Swift 6 toolchain — either a full Xcode or the Command Line
+Tools alone (`xcode-select --install`):
 
 ```sh
 git clone https://github.com/alexiamhe93/folder-terminal.git
@@ -93,13 +94,17 @@ Tests/FolderTerminalCoreTests Core unit tests
 scripts/                      App and release packaging
 ```
 
-Run the automated checks with a full Xcode installation selected:
+Run the automated checks:
 
 ```sh
 swift build
-swift test
+make test
 make app
 ```
+
+Use `make test` rather than `swift test` — it supplies the swift-testing search
+paths that a Command-Line-Tools-only install does not provide, and is a plain
+`swift test` when a full Xcode is present.
 
 The extended manual regression checklist is in [TESTING.md](TESTING.md). See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a change.
 

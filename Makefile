@@ -10,4 +10,4 @@ release:
 	./scripts/package-release.sh
 
 test:
-	swift test
+	./scripts/run-tests.sh

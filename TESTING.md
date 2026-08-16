@@ -2,13 +2,15 @@
 
 ## Automated
 
-Run from the project directory with a full Xcode installation selected:
+Run from the project directory:
 
 ```sh
 swift build
-swift test
+make test
 make app
 ```
+
+`make test` rather than `swift test`: swift-testing ships as a framework, and with only the Command Line Tools installed it is present but not on any search path. `scripts/run-tests.sh` supplies the paths when a full Xcode is absent and changes nothing when one is present.
 
 The core suite covers recursive split editing and collapse, drag-style move transformations, ratio clamping (on edit and on decode), failed moves leaving the layout untouched, browsing history (trail recording, forward-trail clearing, the 200-entry cap), owner-only workspace permissions, Codable round trips, runtime-only shell state, validated pins, terminal/file binding cleanup, missing-bookmark recovery, shell escaping, file operations (Finder-style unique naming, rename validation, sort ordering, create/rename/duplicate/copy/move/trash on disk, and legacy-payload decoding of the hidden-files and sort settings), and column-path derivation (`ColumnPathTests`: normalization, root-to-current chains, escaped roots, sibling-prefix rejection, ancestors).
 

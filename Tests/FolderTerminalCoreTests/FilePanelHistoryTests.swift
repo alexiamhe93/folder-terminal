@@ -8,7 +8,10 @@ import Testing
     state.navigate(to: "/a/b/c")
     #expect(state.backHistory == ["/a", "/a/b"])
 
-    #expect(state.goBack())
+    // `#expect` evaluates its argument inside a closure that captures the
+    // value immutably, so a mutating call has to happen outside the macro.
+    let steppedBack = state.goBack()
+    #expect(steppedBack)
     #expect(state.currentFolder == "/a/b")
     #expect(state.forwardHistory == ["/a/b/c"])
 
@@ -32,13 +35,16 @@ import Testing
 @Test func historyStepsBothWaysWithoutLosingPlace() {
     var state = FilePanelState(rootFolder: "/a")
     state.navigate(to: "/a/b")
-    #expect(state.goBack())
-    #expect(state.goForward())
+    let steppedBack = state.goBack()
+    let steppedForward = state.goForward()
+    #expect(steppedBack)
+    #expect(steppedForward)
     #expect(state.currentFolder == "/a/b")
     #expect(state.backHistory == ["/a"])
     #expect(state.forwardHistory.isEmpty)
 
-    #expect(state.goForward() == false)
+    let steppedPastTheEnd = state.goForward()
+    #expect(steppedPastTheEnd == false)
     #expect(state.currentFolder == "/a/b")
 }
 

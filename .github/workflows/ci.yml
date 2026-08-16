@@ -24,7 +24,7 @@ jobs:
         run: swift build
 
       - name: Test
-        run: swift test
+        run: make test
 
       - name: Build app bundle
         run: make app

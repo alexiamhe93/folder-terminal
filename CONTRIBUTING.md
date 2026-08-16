@@ -17,7 +17,7 @@ Use a GitHub discussion or feature-request issue before undertaking a large UI, 
 git clone https://github.com/alexiamhe93/folder-terminal.git
 cd folder-terminal
 swift build
-swift test
+make test
 ```
 
 Open `Package.swift` in Xcode to run and debug the application. The package uses Swift 5.9 tools and targets macOS 14 or later.
@@ -27,7 +27,7 @@ Open `Package.swift` in Xcode to run and debug the application. The package uses
 1. Create a branch from `main`.
 2. Keep the change focused and follow the conventions in nearby Swift files.
 3. Add or update core tests where the project already has a test seam.
-4. Run `swift build`, `swift test`, and `make app`.
+4. Run `swift build`, `make test`, and `make app`.
 5. Exercise the relevant sections of `TESTING.md` for UI or terminal changes.
 6. Explain the user-visible result and list exactly what you verified in the pull request.
 
