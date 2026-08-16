@@ -28,7 +28,9 @@ struct ColumnBrowserView<ContextMenu: View>: View {
     let quickLook: (FileEntry) -> Void
     let commitRename: (FileEntry) -> Void
     let cancelRename: () -> Void
-    let receiveDrop: ([URL], URL) -> Void
+    /// Dropped URLs, the folder they were dropped on, and whether the drop
+    /// asked for a copy.
+    let receiveDrop: ([URL], URL, Bool) -> Void
     @ViewBuilder let contextMenu: (FileEntry) -> ContextMenu
 
     private var columns: [String] {
@@ -80,7 +82,7 @@ struct ColumnBrowserView<ContextMenu: View>: View {
                         quickLook: { quickLook(entry) },
                         commitRename: { commitRename(entry) },
                         cancelRename: cancelRename,
-                        dropURLs: entry.isDirectory ? { urls in receiveDrop(urls, url) } : nil,
+                        dropURLs: entry.isDirectory ? { urls, copy in receiveDrop(urls, url, copy) } : nil,
                         contextMenu: { contextMenu(entry) },
                         isPanelFocused: isPanelFocused,
                         isOnPath: onPath.map { ColumnPath.normalize($0) == entry.id } ?? false,
@@ -99,7 +101,8 @@ struct ColumnBrowserView<ContextMenu: View>: View {
         }
         .contentShape(Rectangle())
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            loadDroppedFileURLs(providers) { urls in receiveDrop(urls, url) }
+            let copy = dropIsCopy()
+            return loadDroppedFileURLs(providers) { urls in receiveDrop(urls, url, copy) }
         }
     }
 

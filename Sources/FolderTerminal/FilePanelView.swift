@@ -34,6 +34,45 @@ struct FileBrowserActions {
     var copyNames: (() -> Void)?
 }
 
+/// Collects the results of concurrent item-provider loads.
+///
+/// `loadObject(ofClass:)` calls back on its own queue, so several providers in
+/// one drop report at the same time on different threads. Appending each result
+/// to a shared array was an unsynchronised mutation — it could corrupt the array
+/// outright, and even when it survived it left the URLs in whatever order the
+/// providers happened to finish. Each result goes to a fixed slot under a lock
+/// instead, so the drop keeps the order it was made in.
+private final class DroppedURLCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var slots: [URL?]
+
+    init(count: Int) {
+        slots = Array(repeating: nil, count: count)
+    }
+
+    func store(_ url: URL?, at index: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        slots[index] = url
+    }
+
+    var urls: [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        return slots.compactMap { $0 }
+    }
+}
+
+/// Whether the drop being handled right now is an ⌥-drop, and therefore a copy.
+///
+/// Read synchronously while the drop is delivered. Reading it later — after the
+/// providers have finished loading — asks about whatever event happens to be
+/// current by then, which is no longer the drag: the modifier had usually been
+/// released, and ⌥-drop silently moved instead of copying.
+func dropIsCopy() -> Bool {
+    NSEvent.modifierFlags.contains(.option)
+}
+
 /// Reads dropped item providers into file URLs and delivers them on the main
 /// queue once every provider has reported. Shared by the list and column
 /// browsers.
@@ -43,16 +82,17 @@ func loadDroppedFileURLs(
 ) -> Bool {
     let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
     guard !fileProviders.isEmpty else { return false }
-    var urls: [URL] = []
+    let collector = DroppedURLCollector(count: fileProviders.count)
     let group = DispatchGroup()
-    for provider in fileProviders {
+    for (index, provider) in fileProviders.enumerated() {
         group.enter()
         _ = provider.loadObject(ofClass: URL.self) { url, _ in
-            if let url { urls.append(url) }
+            collector.store(url, at: index)
             group.leave()
         }
     }
     group.notify(queue: .main) {
+        let urls = collector.urls
         if !urls.isEmpty { completion(urls) }
     }
     return true
@@ -359,7 +399,7 @@ struct FilePanelView: View {
                         commitRename: { commitRename(of: entry) },
                         cancelRename: { renamingEntryPath = nil },
                         dropURLs: entry.isDirectory
-                            ? { urls in receiveDrop(urls, into: entry.url) }
+                            ? { urls, copy in receiveDrop(urls, into: entry.url, copy: copy) }
                             : nil,
                         contextMenu: { entryContextMenu(for: entry) },
                         isPanelFocused: browserFocused
@@ -383,7 +423,10 @@ struct FilePanelView: View {
             perform { try FileOperations.copy(urls, into: currentFolderURL) }
         }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            loadDroppedFileURLs(providers) { urls in receiveDrop(urls, into: currentFolderURL) }
+            let copy = dropIsCopy()
+            return loadDroppedFileURLs(providers) { urls in
+                receiveDrop(urls, into: currentFolderURL, copy: copy)
+            }
         }
     }
 
@@ -407,7 +450,7 @@ struct FilePanelView: View {
             quickLook: { entry in if !entry.isDirectory { quickLookURL = entry.url } },
             commitRename: { entry in commitRename(of: entry) },
             cancelRename: { renamingEntryPath = nil },
-            receiveDrop: { urls, folder in receiveDrop(urls, into: folder) },
+            receiveDrop: { urls, folder, copy in receiveDrop(urls, into: folder, copy: copy) },
             contextMenu: { entry in entryContextMenu(for: entry) }
         )
         .focusable()
@@ -658,12 +701,21 @@ struct FilePanelView: View {
     }
 
     private func commitRename(of entry: FileEntry) {
-        renamingEntryPath = nil
-        guard renameText != entry.url.lastPathComponent else { return }
-        perform {
+        guard renameText != entry.url.lastPathComponent else {
+            renamingEntryPath = nil
+            return
+        }
+        do {
             let renamed = try FileOperations.rename(entry.url, to: renameText)
             selectedEntryPaths = [renamed.path]
             selectionAnchorPath = renamed.path
+            renamingEntryPath = nil
+            listingVersion += 1
+        } catch {
+            // The field stays open on a rejected name — closing it threw away
+            // what had been typed and left the user to start the rename again
+            // to fix a typo or a collision.
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -696,8 +748,12 @@ struct FilePanelView: View {
 
     /// Finder semantics: drops move by default, ⌥-drops copy. Drops that
     /// already live in the destination are no-ops (handled by `move`).
-    private func receiveDrop(_ urls: [URL], into folder: URL) {
-        let copy = NSApp.currentEvent?.modifierFlags.contains(.option) == true
+    ///
+    /// `copy` is decided by the caller at the moment of the drop — see
+    /// `dropIsCopy()` — because the URLs arrive too late to ask.
+    private func receiveDrop(_ urls: [URL], into folder: URL, copy: Bool) {
+        // Dropping a folder onto itself, and dropping anything onto the folder
+        // it already sits in, are both no-ops rather than errors.
         let sources = urls.filter { $0.standardizedFileURL != folder.standardizedFileURL }
         guard !sources.isEmpty else { return }
         perform {
@@ -754,29 +810,15 @@ struct FilePanelView: View {
     // MARK: Navigation
 
     private func navigate(to url: URL, recordHistory: Bool) {
-        updateState { value in
-            if recordHistory && value.currentFolder != url.path {
-                value.backHistory.append(value.currentFolder)
-                value.forwardHistory = []
-            }
-            value.currentFolder = url.path
-        }
+        updateState { $0.navigate(to: url.path, recordHistory: recordHistory) }
     }
 
     private func goBack() {
-        updateState { value in
-            guard let destination = value.backHistory.popLast() else { return }
-            value.forwardHistory.append(value.currentFolder)
-            value.currentFolder = destination
-        }
+        updateState { $0.goBack() }
     }
 
     private func goForward() {
-        updateState { value in
-            guard let destination = value.forwardHistory.popLast() else { return }
-            value.backHistory.append(value.currentFolder)
-            value.currentFolder = destination
-        }
+        updateState { $0.goForward() }
     }
 
     private func updateState(_ transform: (inout FilePanelState) -> Void) {
@@ -845,7 +887,8 @@ struct FileEntryRow<ContextMenu: View>: View {
     let quickLook: () -> Void
     let commitRename: () -> Void
     let cancelRename: () -> Void
-    let dropURLs: (([URL]) -> Void)?
+    /// Receives the dropped URLs and whether the drop asked for a copy.
+    let dropURLs: (([URL], Bool) -> Void)?
     @ViewBuilder let contextMenu: () -> ContextMenu
     /// Whether the owning panel has keyboard focus, so selection can be drawn
     /// the way Finder does it — accent when active, grey when not.
@@ -929,25 +972,14 @@ func selectionShape(fill: Color, bordered: Bool) -> some View {
 }
 
 private struct FolderDropModifier: ViewModifier {
-    let dropURLs: (([URL]) -> Void)?
+    let dropURLs: (([URL], Bool) -> Void)?
     @Binding var targeted: Bool
 
     func body(content: Content) -> some View {
         if let dropURLs {
             content.onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
-                var urls: [URL] = []
-                let group = DispatchGroup()
-                for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                    group.enter()
-                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                        if let url { urls.append(url) }
-                        group.leave()
-                    }
-                }
-                group.notify(queue: .main) {
-                    if !urls.isEmpty { dropURLs(urls) }
-                }
-                return true
+                let copy = dropIsCopy()
+                return loadDroppedFileURLs(providers) { urls in dropURLs(urls, copy) }
             }
         } else {
             content

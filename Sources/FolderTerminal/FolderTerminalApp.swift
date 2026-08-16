@@ -8,12 +8,24 @@ import SwiftUI
 /// are what you close often; the window is not. So the window's Close moves to
 /// ⇧⌘W and ⌘W is left to "Close Panel".
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Flushes the workspace to disk. Set by the app once the store exists.
+    ///
+    /// Saves are debounced by a quarter second so a drag across a divider does
+    /// not write the file on every frame, which meant quitting straight after a
+    /// change — the common case, since the change is usually why you were
+    /// finished — lost it. Quitting now writes whatever is still pending.
+    var flushWorkspace: (@MainActor () -> Void)?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let fileMenu = NSApp.mainMenu?.item(withTitle: "File")?.submenu else { return }
         for item in fileMenu.items where item.keyEquivalent == "w"
             && item.keyEquivalentModifierMask == .command {
             item.keyEquivalentModifierMask = [.command, .shift]
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { flushWorkspace?() }
     }
 }
 
@@ -40,7 +52,10 @@ struct FolderTerminalApp: App {
                 .id(theme)
                 .frame(minWidth: 900, minHeight: 580)
                 .preferredColorScheme(.dark)
-                .task { terminals.watchForClosedPanels(in: store) }
+                .task {
+                    terminals.watchForClosedPanels(in: store)
+                    appDelegate.flushWorkspace = { [weak store] in store?.saveNow() }
+                }
                 .onChange(of: theme) { _, _ in terminals.applyCurrentTheme() }
         }
         .windowStyle(.titleBar)
@@ -152,7 +167,11 @@ struct WorkspaceCommands: Commands {
         guard let id = store.selectedPanelID,
               let panel = store.panel(id: id), case .file = panel.kind else { return }
         FolderPicker.choose { url in
-            if let url { try? store.setFolder(url, for: id) }
+            guard let url else { return }
+            do { try store.setFolder(url, for: id) }
+            // The panel shows the same failure when the picker is used from
+            // its own button; ⌘O silently did nothing at all.
+            catch { presentFolderError(error) }
         }
     }
 
@@ -197,6 +216,15 @@ struct WorkspaceCommands: Commands {
             return
         }
     }
+}
+
+@MainActor
+private func presentFolderError(_ error: Error) {
+    let alert = NSAlert()
+    alert.messageText = "Folder Browser"
+    alert.informativeText = error.localizedDescription
+    alert.addButton(withTitle: "OK")
+    alert.runModal()
 }
 
 enum FolderPicker {

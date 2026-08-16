@@ -125,23 +125,42 @@ private struct SplitDivider: View {
     let axis: Axis
     let onChange: (CGFloat) -> Void
     @State private var previousTranslation: CGFloat = 0
+    @State private var pushedCursor = false
 
     var body: some View {
         Rectangle()
             .fill(Theme.divider)
             .contentShape(Rectangle())
+            // Every push must be matched by exactly one pop. Popping on a hover
+            // that never pushed unbalances AppKit's cursor stack, and a divider
+            // that goes away mid-hover — closing a panel, dropping one beside
+            // another — never got its pop at all and left the window stuck
+            // showing a resize cursor.
             .onHover { hovering in
                 if hovering {
-                    (axis == .horizontal ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push()
+                    pushCursor()
                 } else {
-                    NSCursor.pop()
+                    popCursor()
                 }
             }
+            .onDisappear(perform: popCursor)
             .gesture(DragGesture().onChanged { value in
                 let translation = axis == .horizontal ? value.translation.width : value.translation.height
                 onChange(translation - previousTranslation)
                 previousTranslation = translation
             }.onEnded { _ in previousTranslation = 0 })
+    }
+
+    private func pushCursor() {
+        guard !pushedCursor else { return }
+        (axis == .horizontal ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push()
+        pushedCursor = true
+    }
+
+    private func popCursor() {
+        guard pushedCursor else { return }
+        NSCursor.pop()
+        pushedCursor = false
     }
 }
 

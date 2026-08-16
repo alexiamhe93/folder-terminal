@@ -10,7 +10,7 @@ swift test
 make app
 ```
 
-The core suite covers recursive split editing and collapse, drag-style move transformations, ratio clamping, Codable round trips, runtime-only shell state, validated pins, terminal/file binding cleanup, missing-bookmark recovery, shell escaping, file operations (Finder-style unique naming, rename validation, sort ordering, create/rename/duplicate/copy/move/trash on disk, and legacy-payload decoding of the hidden-files and sort settings), and column-path derivation (`ColumnPathTests`: normalization, root-to-current chains, escaped roots, sibling-prefix rejection, ancestors).
+The core suite covers recursive split editing and collapse, drag-style move transformations, ratio clamping (on edit and on decode), failed moves leaving the layout untouched, browsing history (trail recording, forward-trail clearing, the 200-entry cap), owner-only workspace permissions, Codable round trips, runtime-only shell state, validated pins, terminal/file binding cleanup, missing-bookmark recovery, shell escaping, file operations (Finder-style unique naming, rename validation, sort ordering, create/rename/duplicate/copy/move/trash on disk, and legacy-payload decoding of the hidden-files and sort settings), and column-path derivation (`ColumnPathTests`: normalization, root-to-current chains, escaped roots, sibling-prefix rejection, ancestors).
 
 ## Manual workspace smoke test
 
@@ -24,6 +24,8 @@ The core suite covers recursive split editing and collapse, drag-style move tran
 8. Run `cd` manually and confirm the shell status shows its differing location while the pinned folder remains unchanged. Use **Unpin** and confirm it clears only the pin.
 9. Make panels narrow and confirm secondary browser and terminal controls move into overflow menus while the primary status remains legible.
 10. Close and relaunch. Confirm layout, ratios, links, browsers, and pinned folders restore, while no stale shell location appears before the new shell reports one.
+10a. Drag a divider and quit with ⌘Q within a second of releasing it. Relaunch and confirm the new ratio survived — saves are debounced, so this checks the flush on termination.
+10b. Hover a divider until the resize cursor appears, then close that panel from another panel's header menu while the pointer stays put. Confirm the cursor returns to normal.
 11. Delete a pinned folder and confirm the terminal reports **Pinned folder unavailable** and still permits **Unpin**.
 12. Single-click different files and folders in list and tree views. Confirm exactly one row in that browser is highlighted, and that navigation clears stale selection.
 13. Click directly in each terminal, type `printf 'terminal-input-ok\\n'`, and confirm the command and output appear in the clicked terminal.
@@ -40,10 +42,12 @@ The core suite covers recursive split editing and collapse, drag-style move tran
 5. Use Duplicate (menu or context menu) on a multi-selection; confirm `name copy` / `name copy 2` siblings appear.
 6. Copy a selection with ⌘C and paste with ⌘V into another file panel; confirm a colliding paste keeps both (`name 2`).
 7. Move to Trash with ⌘⌫ and via the context menu; confirm the items land in the Trash (recoverable).
-8. Drag rows onto a folder row and onto another panel's background; confirm the default drop moves and an ⌥-drop copies.
-9. Drag a row out into Finder and confirm the file arrives.
-10. Toggle Show Hidden Files and each sort option (name / date modified / size, ascending / descending); relaunch and confirm both persist per panel.
-11. Run `touch marker` in a linked terminal and confirm the file panel listing refreshes by itself within a second.
+8. Drag rows onto a folder row and onto another panel's background; confirm the default drop moves and an ⌥-drop copies. Hold ⌥ until the drop lands — the modifier is read then, not afterwards.
+9. Multi-select several files and drag them all at once onto a folder; confirm every file arrives and none is dropped or duplicated.
+10. Drag a row out into Finder and confirm the file arrives.
+11. Toggle Show Hidden Files and each sort option (name / date modified / size, ascending / descending); relaunch and confirm both persist per panel.
+12. Run `touch marker` in a linked terminal and confirm the file panel listing refreshes by itself within a second.
+13. Rename a file to a name that already exists; confirm the alert appears, the field stays open with the typed name, and Escape still cancels.
 
 ## Column view and the path bar
 

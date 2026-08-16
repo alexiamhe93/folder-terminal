@@ -52,7 +52,12 @@ public final class WorkspaceStore: ObservableObject {
     private let bookmarkResolver: FolderBookmarkResolving
     private let fileManager: FileManager
     private var saveWorkItem: DispatchWorkItem?
+    /// Security-scoped URLs whose access this store started and must stop.
+    /// Restored bookmarks land in the array; folders chosen at runtime are
+    /// keyed by panel so re-choosing releases the panel's previous folder
+    /// instead of stacking another unbalanced `startAccessing…` call.
     private var accessedURLs: [URL] = []
+    private var panelAccessedURLs: [UUID: URL] = [:]
 
     public init(
         persistenceURL: URL? = nil,
@@ -68,6 +73,7 @@ public final class WorkspaceStore: ObservableObject {
 
     deinit {
         for url in accessedURLs { url.stopAccessingSecurityScopedResource() }
+        for url in panelAccessedURLs.values { url.stopAccessingSecurityScopedResource() }
     }
 
     public static func defaultPersistenceURL(fileManager: FileManager = .default) -> URL {
@@ -128,6 +134,7 @@ public final class WorkspaceStore: ObservableObject {
         guard document.layout.panelIDs.count > 1 else { return }
         guard document.layout.removePanel(id: id) != nil else { return }
         if document.selectedPanelID == id { document.selectedPanelID = document.layout.panelIDs.first }
+        releasePanelAccess(for: id)
         removeBindings(to: id)
         objectWillChange.send()
         scheduleSave()
@@ -217,8 +224,16 @@ public final class WorkspaceStore: ObservableObject {
     public func setFolder(_ url: URL, for panelID: UUID) throws {
         try validateFolder(url.path)
         let bookmark = try bookmarkResolver.makeBookmark(for: url)
-        _ = url.startAccessingSecurityScopedResource()
-        accessedURLs.append(url)
+        // Only a call that actually started a scope may be stopped later, and
+        // the panel's previous folder is released here rather than being held
+        // until the process exits. Re-choosing the folder a panel already holds
+        // must not start a second scope for it.
+        if panelAccessedURLs[panelID] != url {
+            releasePanelAccess(for: panelID)
+            if url.startAccessingSecurityScopedResource() {
+                panelAccessedURLs[panelID] = url
+            }
+        }
         updatePanel(id: panelID) { panel in
             guard case .file(var state) = panel.kind else { return }
             state.rootFolder = url.path
@@ -334,6 +349,12 @@ public final class WorkspaceStore: ObservableObject {
     private func nearestFilePanelID(to id: UUID) -> UUID? {
         if let panel = panel(id: id), case .file = panel.kind { return id }
         return filePanels.first?.id
+    }
+
+    /// Stops the security-scoped access this store started for `panelID`.
+    private func releasePanelAccess(for panelID: UUID) {
+        guard let previous = panelAccessedURLs.removeValue(forKey: panelID) else { return }
+        previous.stopAccessingSecurityScopedResource()
     }
 
     private func removeBindings(to filePanelID: UUID) {

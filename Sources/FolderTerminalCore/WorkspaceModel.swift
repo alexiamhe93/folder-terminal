@@ -82,6 +82,49 @@ public struct FilePanelState: Codable, Equatable, Sendable {
     }
 }
 
+extension FilePanelState {
+    /// How many steps of back/forward history a panel keeps. Browsing is a
+    /// long-lived activity and every step used to be appended and saved
+    /// forever, so a panel open for weeks grew an unbounded list of folders in
+    /// the workspace file. Oldest entries are dropped once the cap is reached.
+    public static let historyLimit = 200
+
+    /// Moves to `path`, recording the departure so Back can return to it.
+    /// Navigating to the folder already shown records nothing.
+    public mutating func navigate(to path: String, recordHistory: Bool = true) {
+        if recordHistory && currentFolder != path {
+            backHistory.append(currentFolder)
+            if backHistory.count > Self.historyLimit {
+                backHistory.removeFirst(backHistory.count - Self.historyLimit)
+            }
+            forwardHistory = []
+        }
+        currentFolder = path
+    }
+
+    @discardableResult
+    public mutating func goBack() -> Bool {
+        guard let destination = backHistory.popLast() else { return false }
+        forwardHistory.append(currentFolder)
+        if forwardHistory.count > Self.historyLimit {
+            forwardHistory.removeFirst(forwardHistory.count - Self.historyLimit)
+        }
+        currentFolder = destination
+        return true
+    }
+
+    @discardableResult
+    public mutating func goForward() -> Bool {
+        guard let destination = forwardHistory.popLast() else { return false }
+        backHistory.append(currentFolder)
+        if backHistory.count > Self.historyLimit {
+            backHistory.removeFirst(backHistory.count - Self.historyLimit)
+        }
+        currentFolder = destination
+        return true
+    }
+}
+
 public struct TerminalPanelState: Codable, Equatable, Sendable {
     public var linkedFilePanelID: UUID?
     public var environmentFolder: String?
@@ -165,6 +208,15 @@ public struct WorkspaceSplit: Codable, Equatable, Sendable {
     public var first: WorkspaceLayout
     public var second: WorkspaceLayout
 
+    /// The narrowest a split may be dragged. Both sides stay reachable, so a
+    /// divider can always be dragged back.
+    public static let ratioRange: ClosedRange<Double> = 0.1...0.9
+
+    public static func clamp(ratio: Double) -> Double {
+        guard ratio.isFinite else { return 0.5 }
+        return min(max(ratio, ratioRange.lowerBound), ratioRange.upperBound)
+    }
+
     public init(
         id: UUID = UUID(),
         orientation: SplitOrientation,
@@ -174,9 +226,24 @@ public struct WorkspaceSplit: Codable, Equatable, Sendable {
     ) {
         self.id = id
         self.orientation = orientation
-        self.ratio = min(max(ratio, 0.1), 0.9)
+        self.ratio = Self.clamp(ratio: ratio)
         self.first = first
         self.second = second
+    }
+
+    /// Synthesised decoding would assign `ratio` straight from the file and
+    /// skip the clamp in `init`, so a workspace carrying 0, 1, or NaN — an
+    /// older build, a truncated write, a hand edit — restored a split with one
+    /// side sized to nothing and no divider left on screen to drag back.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            orientation: try container.decode(SplitOrientation.self, forKey: .orientation),
+            ratio: try container.decode(Double.self, forKey: .ratio),
+            first: try container.decode(WorkspaceLayout.self, forKey: .first),
+            second: try container.decode(WorkspaceLayout.self, forKey: .second)
+        )
     }
 }
 
@@ -285,7 +352,7 @@ public indirect enum WorkspaceLayout: Codable, Equatable, Sendable {
             return false
         case .split(var split):
             if split.id == splitID {
-                split.ratio = min(max(ratio, 0.1), 0.9)
+                split.ratio = WorkspaceSplit.clamp(ratio: ratio)
                 self = .split(split)
                 return true
             }
@@ -306,10 +373,16 @@ public indirect enum WorkspaceLayout: Codable, Equatable, Sendable {
         placeAfter: Bool = true
     ) -> Bool {
         guard id != targetID, panel(id: id) != nil, panel(id: targetID) != nil else { return false }
+        // The move is a removal followed by a re-insert, and the removal has
+        // already mutated the tree by the time the insert runs. If the insert
+        // ever fails the panel would be gone from a layout that reports the
+        // move as failed, so restore the tree as it was rather than drop it.
+        let original = self
         guard let moved = removePanel(id: id) else { return false }
         if splitPanel(id: targetID, orientation: orientation, newPanel: moved, placeAfter: placeAfter) {
             return true
         }
+        self = original
         return false
     }
 }

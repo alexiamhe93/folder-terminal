@@ -67,6 +67,52 @@ import Testing
     #expect(split.ratio == 0.9)
 }
 
+/// Synthesised decoding assigns stored properties directly, so the clamp in
+/// `init` does not run on load unless the decoder is written to use it.
+@Test func ratioIsClampedWhenDecoded() throws {
+    let payload = """
+    {"split":{"_0":{
+        "id":"\(UUID().uuidString)",
+        "orientation":"vertical",
+        "ratio":1.0,
+        "first":{"panel":{"_0":{"id":"\(UUID().uuidString)","kind":{"terminal":{"_0":{}}}}}},
+        "second":{"panel":{"_0":{"id":"\(UUID().uuidString)","kind":{"terminal":{"_0":{}}}}}}
+    }}}
+    """
+    let layout = try JSONDecoder().decode(WorkspaceLayout.self, from: Data(payload.utf8))
+    guard case .split(let split) = layout else {
+        Issue.record("Expected split")
+        return
+    }
+    #expect(split.ratio == 0.9)
+}
+
+@Test func nonFiniteRatioFallsBackToAnEvenSplit() throws {
+    let split = WorkspaceSplit(
+        orientation: .vertical,
+        ratio: .nan,
+        first: .panel(.terminal()),
+        second: .panel(.terminal())
+    )
+    #expect(split.ratio == 0.5)
+}
+
+@Test func failedMoveLeavesTheLayoutUntouched() {
+    let a = WorkspacePanel.file(at: "/a")
+    let b = WorkspacePanel.terminal()
+    let layout = WorkspaceLayout.split(WorkspaceSplit(
+        orientation: .vertical,
+        first: .panel(a),
+        second: .panel(b)
+    ))
+
+    var moved = layout
+    // A target that is not in the tree: the panel must not be removed by the
+    // attempt, since the caller is told the move did not happen.
+    #expect(moved.movePanel(id: a.id, beside: UUID(), orientation: .vertical) == false)
+    #expect(moved == layout)
+}
+
 @Test func documentCodableRoundTrip() throws {
     let document = WorkspaceDocument.initial(homeFolder: "/Users/example")
     let data = try JSONEncoder().encode(document)
